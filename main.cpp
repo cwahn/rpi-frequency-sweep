@@ -10,6 +10,8 @@ constexpr int freq_bin_num = 100;
 constexpr int cycle_time_ns = 1000000;
 constexpr double cycle_per_bin = 500;
 
+String dir_path = "/Users/chanwooahn/Documents/dev/cpp/rpi-motor-system-id";
+
 int main(int argc, char const *argv[])
 {
     auto sm = StateMachine{
@@ -51,7 +53,7 @@ int main(int argc, char const *argv[])
     gpioTerminate();
 
     const Writer writer{sm};
-    writer.write();
+    writer.write(dir_path);
 
     return 0;
 }
