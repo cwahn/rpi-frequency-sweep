@@ -7,7 +7,7 @@ using namespace efp;
 constexpr double min_freq_hz = 100;
 constexpr double max_freq_hz = 1000;
 constexpr int freq_bin_num = 100;
-constexpr int cycle_time_ns = 1000000;
+constexpr int cycle_time_ns = 1'000'000;
 constexpr double cycle_per_bin = 500;
 
 String dir_path = "/Users/chanwooahn/Documents/dev/cpp/rpi-motor-system-id";
