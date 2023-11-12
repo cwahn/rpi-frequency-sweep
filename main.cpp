@@ -27,6 +27,7 @@ int main(int argc, char const *argv[])
         abort();
     }
     auto encoder = Encoder::instance();
+    auto dc_motor = DcMotor::instance();
 
     bool run = true;
     int next = now_ns();
