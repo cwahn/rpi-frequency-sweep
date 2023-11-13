@@ -14,7 +14,7 @@ String dir_path = "/Users/chanwooahn/Documents/dev/cpp/rpi-motor-system-id";
 
 int main(int argc, char const *argv[])
 {
-    auto sm = StateMachine{
+    auto state_machine = StateMachine{
         min_freq_hz,
         max_freq_hz,
         freq_bin_num,
@@ -26,6 +26,7 @@ int main(int argc, char const *argv[])
         std::cout << "err: gpioInitialise" << std::endl;
         abort();
     }
+
     auto encoder = Encoder::instance();
     auto dc_motor = DcMotor::instance();
 
@@ -37,13 +38,13 @@ int main(int argc, char const *argv[])
         const int now = now_ns();
         if (now > next)
         {
-            const int pos = encoder.position();
+            const int pos = encoder();
 
-            const auto maybe_cmd = sm.react(now, pos);
+            const auto maybe_cmd = state_machine(now, pos);
 
             maybe_cmd.match(
                 [](double cmd)
-                { dc_motor.command(cmd); },
+                { dc_motor(cmd); },
                 [](Nothing _)
                 { run = false; });
 
@@ -53,7 +54,7 @@ int main(int argc, char const *argv[])
 
     gpioTerminate();
 
-    const Writer writer{sm};
+    const Writer writer{state_machine};
     writer.write(dir_path);
 
     return 0;

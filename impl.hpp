@@ -16,6 +16,7 @@ constexpr int motor_0 = 20;
 constexpr int motor_1 = 21;
 
 // HAL output
+
 class DcMotor
 {
 public:
@@ -25,7 +26,7 @@ public:
         return motor;
     }
 
-    void command(double cmd_v)
+    void opreator()(double cmd_v)
     {
         const double bound_cmd_v = bound_v(-3.3, 3.3, voltage);
         const int pwm_cmd = (int)(bound_cmd_v * 255. / 3.3);
@@ -89,7 +90,7 @@ public:
             enc_a == 0 ? ++enc_pos : --enc_pos;
     }
 
-    int position()
+    int operator()
     {
         std::lock_guard<std::mutex> lock(m);
         return position_;
@@ -140,7 +141,7 @@ public:
     {
     }
 
-    Maybe<double> react(int now_ns, int encoder_pos)
+    Maybe<double> operator()(int now_ns, int encoder_pos)
     {
         positions_.push_back(encoder_pos);
         const auto motor_cmd = motor_cmd_(now_ns);
@@ -198,8 +199,8 @@ private:
 class Writer
 {
 public:
-    Writer(const StateMachine &sm)
-        : sm_{sm}
+    Writer(const StateMachine &state_machine)
+        : sm_{state_machine}
     {
     }
 
