@@ -7,19 +7,14 @@ using namespace efp;
 constexpr double min_freq_hz = 100;
 constexpr double max_freq_hz = 1000;
 constexpr int freq_bin_num = 100;
-constexpr int cycle_time_ns = 1'000'000;
+constexpr int cycle_time_us = 1'000;
 constexpr double cycle_per_bin = 500;
 
 String dir_path = "/Users/chanwooahn/Documents/dev/cpp/rpi-motor-system-id";
 
 int main(int argc, char const *argv[])
 {
-    auto state_machine = StateMachine{
-        min_freq_hz,
-        max_freq_hz,
-        freq_bin_num,
-        cycle_time_ns,
-        cycle_per_bin};
+    signal(SIGINT, on_exit);
 
     if (gpioInitialise() < 0)
     {
@@ -27,32 +22,29 @@ int main(int argc, char const *argv[])
         abort();
     }
 
+    auto state_machine = StateMachine{17, 0, 2, cycle_time_us};
+
     auto encoder = Encoder::instance();
+    // auto button_1 = Button
+
     auto dc_motor = DcMotor::instance();
+    auto leds = Leds::instance();
 
     bool run = true;
-    int next = now_ns();
+    int next = now_us();
 
     while (run)
     {
-        const int now = now_ns();
+        const int now = now_us();
         if (now > next)
         {
             const int pos = encoder();
+            const auto voltage_v = state_machine(pos, now);
+            dc_motor(voltage_v);
 
-            const auto maybe_cmd = state_machine(now, pos);
-
-            maybe_cmd.match(
-                [](double cmd)
-                { dc_motor(cmd); },
-                [](Nothing _)
-                { run = false; });
-
-            next += cycle_time_ns;
+            next += cycle_time_us;
         }
     }
-
-    gpioTerminate();
 
     const Writer writer{state_machine};
     writer.write(dir_path);

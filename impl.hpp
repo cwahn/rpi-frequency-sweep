@@ -9,11 +9,36 @@
 using namespace efp;
 using namespace std::chrono;
 
+constexpr int button_1_gpio = 10;
+constexpr int button_2_gpio = 11;
+constexpr int button_3_gpio = 12;
+
 constexpr int encoder_a = 20;
 constexpr int encoder_b = 21;
 
 constexpr int motor_0 = 20;
 constexpr int motor_1 = 21;
+
+constexpr int led_1_gpio = 13;
+constexpr int led_2_gpio = 14;
+constexpr int led_3_gpio = 15;
+
+constexpr int count_per_rev = 216;
+
+void on_exit(int signum)
+{
+    // Clean up pigpio resources
+    gpioTerminate();
+    printf("GPIO resources released, program terminated.\n");
+}
+
+enum class Traj
+{
+    None,
+    Red1,
+    Green2,
+    Yellow3,
+};
 
 // HAL output
 
@@ -43,13 +68,67 @@ private:
     }
 };
 
+template <int gpio>
+class Led
+{
+public:
+    static Led &instance()
+    {
+        static led = Led{};
+        return led;
+    }
+
+    void operator()(bool on)
+    {
+        if (on)
+            gpioWrite(gpio, on);
+        else
+            gpioWrite(gpio, off);
+    }
+
+private:
+    Led()
+    {
+        gpioSetMode(gpio, PI_OUTPUT);
+    }
+};
+
+class Leds
+{
+public:
+    static Leds &instance()
+    {
+        static Leds leds{};
+        return leds;
+    }
+
+    void operator()(int led_num)
+    {
+        led_1_(led_num == 1);
+        led_2_(led_num == 2);
+        led_3_(led_num == 3);
+    }
+
+private:
+    Leds()
+        : led_1_{Led<led_1_gpio>::instance()},
+          led_2_{Led<led_2_gpio>::instance()},
+          led_3_{Led<led_3_gpio>::instance()}
+    {
+    }
+
+    Led<led_1_gpio> &led_1_;
+    Led<led_2_gpio> &led_2_;
+    Led<led_3_gpio> &led_3_;
+};
+
 // HAL input
 
-int now_ns()
+int now_us()
 {
     static auto init_ = high_resolution_clock::now();
     const auto now_ = high_resolution_clock::now();
-    return duration_cast<nanoseconds>(now_ - init_).count();
+    return duration_cast<microseconds>(now_ - init_).count();
 }
 
 void isr_a();
@@ -72,9 +151,9 @@ public:
         std::lock_guard<std::mutex> lock(m);
 
         if (enc_a == 1)
-            enc_b == 0 ? ++enc_pos : --enc_pos;
+            enc_b == 0 ? ++enc_pos_ : --enc_pos_;
         else
-            enc_b == 0 ? --enc_pos : ++enc_pos;
+            enc_b == 0 ? --enc_pos_ : ++enc_pos_;
     }
 
     void isr_b()
@@ -85,15 +164,15 @@ public:
         std::lock_guard<std::mutex> lock(m);
 
         if (enc_b == 1)
-            enc_a == 0 ? --enc_pos : ++enc_pos;
+            enc_a == 0 ? --enc_pos_ : ++enc_pos_;
         else
-            enc_a == 0 ? ++enc_pos : --enc_pos;
+            enc_a == 0 ? ++enc_pos_ : --enc_pos_;
     }
 
     int operator()
     {
         std::lock_guard<std::mutex> lock(m);
-        return position_;
+        return enc_pos_;
     }
 
 private:
@@ -107,7 +186,7 @@ private:
     }
 
     std::mutex m_;
-    int position_;
+    int enc_pos_;
 };
 
 void isr_a()
@@ -119,153 +198,172 @@ void isr_b()
     Encoder::instance().isr_b();
 }
 
+template <int gpio>
+class Switch
+{
+public:
+    static Switch &instance(void (*callback)())
+    {
+        static Switch s{callback};
+        return s;
+    }
+
+private:
+    Switch(void (*callback)())
+    {
+        const auto res = gpioSetISRFunc(gpio, FALLING_EDGE, 0, callback);
+
+        if (res != 0)
+            abort();
+    };
+};
+
 // State machine
+
+double rev_from_count(int pos_count)
+{
+    return (double)pos_count / (double)count_per_rev;
+}
+
+double trajectory1_rev(int time_us)
+{
+    const auto t_s = time_us * 0.000001;
+
+    if (t_s < 3)
+        return 2 * t_s;
+    else if (t_s < 6)
+        return -2 * t_s + 12;
+    else if (t_s < 12)
+        return 0;
+    else if (t_s < 15)
+        return 2 * t_s - 24;
+    else
+        return 0;
+}
+
+double trajectory2_rev(int time_us)
+{
+    const auto t_s = time_us * 0.000001;
+
+    if (t_s < 5)
+        return 0.2 * t_s;
+    else if (t_s < 10)
+        return -5 - 2 * cos(0.4 * pi * t_s) * sin(1.2 * pi * t_s);
+    else if (t_x < 15)
+        return 2 * (t_s - 12.5);
+    else
+        return 0;
+}
+
+double trajectory3_rev(int time_us)
+{
+    const auto t_s = time_us * 0.000001;
+
+    if (t_s < 15)
+        return exp(0.1 * t_s) * sin(pi * t_s) * cos(0.2 * pi * t_s);
+    else
+        return 0;
+}
 
 class StateMachine
 {
 public:
-    StateMachine(
-        double min_freq_hz,
-        double max_freq_hz,
-        int freq_bin_num,
-        int cycle_time_ns,
-        double cycle_per_bin)
-
-        : min_freq_hz_(min_freq_hz_),
-          max_freq_hz_(max_freq_hz_),
-          freq_bin_num_(freq_bin_num),
-          cycle_time_ns_(cycle_time_ns),
-          cycle_per_bin_(cycle_per_bin),
-          freq_duration_ns_(cycle_per_bin * cycle_time_ns),
-          freq_bin_hz_((max_freq_hz_ - min_freq_hz_) / (double)freq_bin_num)
+    StateMachine(double p, double i, double d, double time_delta_us)
+        : traj_{Traj::None},
+          time_delta_us_{time_delta_us},
+          pid_{Pid{p, i, d, time_delta_us}}
     {
     }
 
-    Maybe<double> operator()(int now_ns, int encoder_pos)
+    double operator()(int pos_count, int current_time_us)
     {
-        positions_.push_back(encoder_pos);
-        const auto motor_cmd = motor_cmd_(now_ns);
-        const auto is_done = is_done_(now_ns);
+        if (traj_ != Traj::None)
+        {
+            const double ref_pos_rev;
+            const time_us = current_time_us - start_time_;
 
-        if (is_done)
-            return Nothing{};
+            switch (traj_)
+            {
+            case Traj::Red1:
+                ref_pos_rev = trajectory1_rev(time_us);
+                break;
+            case Traj::Green2:
+                ref_pos_rev = trajectory2_rev(time_us);
+                break;
+            case Traj::Yellow:
+                ref_pos_rev = trajectory3_rev(time_us);
+                break;
+            default:
+                abort();
+                break;
+            }
+
+            const auto error = ref_pos_rev - rev_from_count(pos_count);
+
+            return pid_(error);
+        }
         else
-            return motor_cmd;
+        {
+            return 0;
+        }
     }
-
-    Vector<int> &&get_pos_data()
-    {
-        return efp::move(positions_);
-    }
-
-    double min_freq_hz_;
-    double max_freq_hz_;
-    int freq_bin_num_;
-    int cycle_time_ns_;
-    double cycle_per_bin_;
-
-    double freq_duration_ns_;
-    double freq_bin_hz_;
-
-    Vector<int> positions_;
 
 private:
-    int bin_(double now_ns)
-    {
-        return now_ns / (freq_duration_ns_);
-    }
-
-    double freq_hz_from_bin_(int bin)
-    {
-        return bin * freq_bin_hz_;
-    }
-
-    double freq_(double now_ns)
-    {
-        return freq_hz_from_bin_(bin_(now_ns));
-    }
-
-    bool is_done_(double now_ns)
-    {
-        return bin_(now_ns) >= freq_bin_num_;
-    }
-
-    double motor_cmd_(double now_ns)
-    {
-        return std::sin(2 * M_PI * freq_(now_ns) * now_ns);
-    }
+    Traj traj_;
+    int start_time_;
+    Pid pid_;
 };
 
-class Writer
+class Pid
 {
 public:
-    Writer(const StateMachine &state_machine)
-        : sm_{state_machine}
+    Pid(double p, double i, double d, double time_delta_us)
+        : p_(p), i_(i), d_(d), time_delta_us_(time_delta_us)
     {
     }
 
-    bool write(String &dir_path)
+    double operator()(double e)
     {
-        const auto to_csv = [](const auto &ints)
-        {
-            const auto strings = map([](int i)
-                                     { return format("{}", i); },
-                                     ints);
-            const auto csv = join(", ", strings);
-            return csv;
-        };
+        integral_e_ += e * time_delta_;
+        const auto u = (p_ * e) + (i * integral_e_) + (d_ * (e - last_e_) / (time_delta_us_ * 1e-6));
+        last_e_ = e;
 
-        const auto file_name = [&](auto freq_hz)
-        {
-            return format("{s}/{}_hz_{}_ns.csv", dir_path, freq_hz, sm_.freq_duration_ns_);
-        };
-
-        const auto write_bin_data = [&](const auto &data)
-        {
-            const auto csv = to_csv(data.positions);
-            const auto file_name_ = file_name(data.freq_hz);
-
-            auto file = File::open(file_name_, "w").value();
-            file.write(csv);
-        };
-
-        const auto bin_datas = split_to_bin_();
-
-        for_each(write_bin_data, bin_datas);
+        return u
     }
 
 private:
-    struct BinData
-    {
-        double freq_hz;
-        VectorView<int> positions;
-    };
+    double p_;
+    double i_;
+    double d_;
+    double time_delta_us_;
+    double last_e_;
+    double integral_e_;
+};
 
-    Vector<BinData> split_to_bin_()
-    {
-        const auto idxs = from_function(sm_.freq_bin_num_, id<int>);
+template <typename F>
+double derivative(const F &f, int t_us, int delta_t_us)
+{
+    return (f(t_us + delta_t_us) - (t_us)) / (double)(delta_t_us * 0.000001);
+}
 
-        const auto freq_hzs = map([&](int i)
-                                  { return i * freq_bin_hz_; },
-                                  idx);
+template <typename As, typename Bs>
+template itae(const As &as, const Bs &refs, int delta_t_us)
+{
+    double res = 0;
+    const auto inner = [](int i, auto a, auto ref)
+    { res += i * delta_t_us / 0.000001 * abs(a - ref); };
 
-        const auto slice_from_idx = [&](int idx)
-        {
-            const auto start = idx * sm_.cycle_per_bin_;
-            const auto end = (1 + idx) * sm_.cycle_per_bin_;
-            return slice(start, end, sm_.position_);
-        };
+    for_each_with_index(inner, as, ref);
 
-        const auto slices = map(slice_from_idx, idxs);
+    return res
+}
 
-        const auto bin_datas = map([&](double f_hz, const auto &slice)
-                                   { return BinData{f_hz, slice}; },
-                                   freq_hzs, slices);
-
-        return bin_datas;
-    }
-
-    StateMachine sm_;
+template <typename As>
+String to_csv(const As &as)
+{
+    const auto strings = map(std::itoa, as);
+    const auto csv = join(", ", strings);
+    return csv;
 }
 
 #endif
