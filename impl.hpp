@@ -9,9 +9,9 @@
 using namespace efp;
 using namespace std::chrono;
 
-constexpr int button_1_gpio = 10;
-constexpr int button_2_gpio = 11;
-constexpr int button_3_gpio = 12;
+constexpr int switch_1_gpio = 10;
+constexpr int switch_2_gpio = 11;
+constexpr int switch_3_gpio = 12;
 
 constexpr int encoder_a = 20;
 constexpr int encoder_b = 21;
@@ -248,7 +248,7 @@ double trajectory2_rev(int time_us)
     if (t_s < 5)
         return 0.2 * t_s;
     else if (t_s < 10)
-        return -5 - 2 * cos(0.4 * pi * t_s) * sin(1.2 * pi * t_s);
+        return -5 - 2 * cos(0.4 * M_PI * t_s) * sin(1.2 * M_PI * t_s);
     else if (t_x < 15)
         return 2 * (t_s - 12.5);
     else
@@ -260,7 +260,7 @@ double trajectory3_rev(int time_us)
     const auto t_s = time_us * 0.000001;
 
     if (t_s < 15)
-        return exp(0.1 * t_s) * sin(pi * t_s) * cos(0.2 * pi * t_s);
+        return exp(0.1 * t_s) * sin(M_PI * t_s) * cos(0.2 * M_PI * t_s);
     else
         return 0;
 }
@@ -328,7 +328,7 @@ public:
         const auto u = (p_ * e) + (i * integral_e_) + (d_ * (e - last_e_) / (time_delta_us_ * 1e-6));
         last_e_ = e;
 
-        return u
+        return u;
     }
 
 private:
@@ -347,15 +347,19 @@ double derivative(const F &f, int t_us, int delta_t_us)
 }
 
 template <typename As, typename Bs>
-template itae(const As &as, const Bs &refs, int delta_t_us)
+template itaes(const As &as, const Bs &refs, int delta_t_us)
 {
-    double res = 0;
-    const auto inner = [](int i, auto a, auto ref)
-    { res += i * delta_t_us / 0.000001 * abs(a - ref); };
+    Vector<double> res{};
+    double itae = 0;
 
+    const auto inner = [](int i, auto a, auto ref)
+    {
+        itae += i * delta_t_us / 0.000001 * abs(a - ref);
+        res.push_back(res);
+    };
     for_each_with_index(inner, as, ref);
 
-    return res
+    return res;
 }
 
 template <typename As>

@@ -25,12 +25,38 @@ int main(int argc, char const *argv[])
     auto state_machine = StateMachine{17, 0, 2, cycle_time_us};
 
     auto encoder = Encoder::instance();
-    // auto button_1 = Button
-
     auto dc_motor = DcMotor::instance();
     auto leds = Leds::instance();
 
+    auto sw_1 = Switch<switch_1_gpio>::instance(
+        to_function_pointer(
+            [&]()
+            {
+                state_machine.traj_ = Traj::Red1;
+                state_machine.start_time_us_ = now_us();
+                leds(1);
+            }));
+
+    auto sw_2 = Switch<switch_2_gpio>::instance(
+        to_function_pointer(
+            [&]()
+            {
+                state_machine.traj_ = Traj::Green2;
+                state_machine.start_time_us_ = now_us();
+                leds(2);
+            }));
+
+    auto sw_3 = Switch<switch_3_gpio>::instance(
+        to_function_pointer(
+            [&]()
+            {
+                state_machine.traj_ = Traj::Yellow3;
+                state_machine.start_time_us_ = now_us();
+                leds(3);
+            }));
+
     bool run = true;
+
     int next = now_us();
 
     while (run)
